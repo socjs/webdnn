@@ -29,10 +29,8 @@ function togglePause() {
 async function initialize() {
     try {
         //noinspection ES6ModulesDependencies
-        let backend = await WebDNN.init();
-        console.log(`backend: ${backend}`);
-
-        dnn = await WebDNN.prepareAll("./output");
+        dnn = await WebDNN.load("./output");
+        console.log(`backend: ${dnn.backendName}`);
 
         Webcam.set({
             dest_width: 192,
@@ -50,8 +48,8 @@ async function initialize() {
 
         $input = $('#snap');
         $output = $('#result');
-        inputView = dnn.inputViews[0];
-        outputView = dnn.outputViews[0];
+        inputView = dnn.getInputViews()[0].toActual();
+        outputView = dnn.getOutputViews()[0].toActual();
         ctxIn = $input.getContext('2d');
         ctxOut = $output.getContext('2d');
         h = $output.height;
@@ -85,9 +83,9 @@ function getImageData() {
 
     for (let y = 0; y < h; y++) {
         for (let x = 0; x < w; x++) {
-            inputView[(y * w + x) * 3] = pixelData[(y * w + x) * 4];
-            inputView[(y * w + x) * 3 + 1] = pixelData[(y * w + x) * 4 + 1];
-            inputView[(y * w + x) * 3 + 2] = pixelData[(y * w + x) * 4 + 2];
+            inputView[(0 * h + y) * w + x] = pixelData[(y * w + x) * 4];
+            inputView[(1 * h + y) * w + x] = pixelData[(y * w + x) * 4 + 1];
+            inputView[(2 * h + y) * w + x] = pixelData[(y * w + x) * 4 + 2];
         }
     }
 }
@@ -97,9 +95,9 @@ function setImageData() {
 
     for (let y = 0; y < h; y++) {
         for (let x = 0; x < w; x++) {
-            imageData.data[(y * w + x) * 4] = outputView[(y * w + x) * 3];
-            imageData.data[(y * w + x) * 4 + 1] = outputView[(y * w + x) * 3 + 1];
-            imageData.data[(y * w + x) * 4 + 2] = outputView[(y * w + x) * 3 + 2];
+            imageData.data[(y * w + x) * 4] = outputView[(0 * h + y) * w + x];
+            imageData.data[(y * w + x) * 4 + 1] = outputView[(1 * h + y) * w + x];
+            imageData.data[(y * w + x) * 4 + 2] = outputView[(2 * h + y) * w + x];
             imageData.data[(y * w + x) * 4 + 3] = 255;
         }
     }

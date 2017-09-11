@@ -1,29 +1,35 @@
 from typing import Optional
 
+from webdnn.graph.axis import Axis
 from webdnn.graph.operator import Operator
 from webdnn.graph.operators.attributes.inplace import Inplace
 from webdnn.graph.variable import Variable
 
 
 class Softmax(Operator):
-    """Softmax operator 
+    """Softmax(name, axis)
+
+    Softmax operator.
 
     Args:
         name (str): Operator name.
+        axis (:obj:`~webdnn.Axis`) axis operator computes along to.
 
+    Signature
+        .. code::
+
+            y, = op(x)
+
+        - **x0** - Input variable.
+        - **y** - Output variable. Its order and shape is same as :code:`x0`.
     """
-    def __init__(self, name: Optional[str]):
+
+    def __init__(self, name: Optional[str], axis: Axis):
         super().__init__(name)
-        self.attributes = {Inplace(self, "x", "y")}
+        self.parameters["axis"] = axis
+        self.attributes.add(Inplace(self, "x", "y"))
 
     def __call__(self, x: Variable):
-        """
-        Args:
-            x (:class:`~webdnn.graph.variable.Variable`): Input
-
-        Returns:
-            tuple of :class:`~webdnn.graph.variable.Variable`: Output
-        """
         y = Variable(x.shape, x.order)
         self.append_input("x", x)
         self.append_output("y", y)

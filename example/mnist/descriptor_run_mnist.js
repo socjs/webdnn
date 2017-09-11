@@ -1,102 +1,101 @@
 'use strict';
 
-let run_if = null;
+let runner = null;
+let samples = null;
+let table = null;
 
-function msg(s) {
-    document.getElementById('msg_place').textContent = s;
+function showMessage(text) {
+    document.getElementById('message').textContent = text;
 }
 
-function run_entry() {
-    run().then(() => {
+async function onButtonClick() {
+    try {
+        await run();
         console.log('run finished');
-    }).catch((error) => {
-        msg('run failed: ' + error);
+
+    } catch (error) {
+        showMessage('run failed: ' + error);
         console.error('run failed ' + error);
-    });
+    }
 }
 
-function reset_backend() {
-    run_if = null;
-    resetOutputTable(document.getElementById('result'));
-    msg('Resetted backend');
+function reset() {
+    runner = null;
+    resetResult();
+}
+
+async function initialize() {
+    let backend = document.querySelector('input[name=backend]:checked').value;
+    let framework = document.querySelector('input[name=framework]:checked').value;
+    runner = await WebDNN.load(`./output_${framework}`, {backendOrder: backend});
+    showMessage(`Backend: ${runner.backendName}, model converted from ${framework}`);
+    console.info(`Backend: ${runner.backendName}, model converted from ${framework}`);
+    samples = await fetchSamples(`./output_${framework}/test_samples.json`);
+    table = document.getElementById('result');
 }
 
 async function run() {
-    if (!run_if) {
-        let backend_name = document.querySelector('input[name=backend_name]:checked').value;
-        run_if = await WebDNN.prepareAll('./output', { backendOrder: backend_name });
-        msg(`Backend: ${run_if.backendName}`);
-        console.info(`Backend: ${run_if.backendName}`);
-    }
+    if (!runner) await initialize();
+    resetResult();
 
-    let test_samples = await fetchSamples('./output/test_samples.json');
-    let output_table = document.getElementById('result');
-    resetOutputTable(output_table);
+    let totalElapsedTime = 0;
 
-    let total_elapsed_time = 0;
-    for (let i = 0; i < test_samples.length; i++) {
-        let sample = test_samples[i];
-        run_if.inputViews[0].set(sample.x);
+    for (let i = 0; i < samples.length; i++) {
+        let sample = samples[i];
+        runner.getInputViews()[0].set(sample.x);
         console.log(`ground truth: ${sample.y}`);
 
         let start = performance.now();
-        await run_if.run();
-        total_elapsed_time += performance.now() - start;
+        await runner.run();
+        totalElapsedTime += performance.now() - start;
 
-        let out_vec = run_if.outputViews[0];
-        let pred_label = WebDNN.Math.argmax(out_vec)[0];
-        // equivalent to
-        /*        let pred_label = 0;
-                let pred_score = -Infinity;
-                for (let j = 0; j < out_vec.length; j++) {
-                    if (out_vec[j] > pred_score) {
-                        pred_score = out_vec[j];
-                        pred_label = j;
-                    }
-                }*/
-        console.log(`predicted: ${pred_label}`);
-        console.log(out_vec);
-        displayPrediction(output_table, sample.x, pred_label, sample.y);
+        let outputVector = runner.getOutputViews()[0].toActual();
+        console.log(outputVector);
+
+        let predictedLabel = WebDNN.Math.argmax(outputVector)[0];
+        console.log(`predicted: ${predictedLabel}`);
+
+        displayPrediction(sample.x, predictedLabel, sample.y);
     }
-    console.log(`Total Elapsed Time[ms/image]: ${(total_elapsed_time / test_samples.length).toFixed(2)}`);
+
+    console.log(`Elapsed Time [ms/image]: ${(totalElapsedTime / samples.length).toFixed(2)}`);
 }
 
 async function fetchSamples(path) {
     let response = await fetch(path);
+    if (!response.ok) throw new Error('Failed to load test samples');
+
     let json = await response.json();
     let samples = [];
     for (let i = 0; i < json.length; i++) {
-        samples.push({ 'x': new Float32Array(json[i]['x']), 'y': json[i]['y'] });
+        samples.push({'x': new Float32Array(json[i]['x']), 'y': json[i]['y']});
     }
 
     return samples;
 }
 
-function resetOutputTable(table) {
-    let rows = table.children;
-    for (let i = rows.length - 1; i >= 1; i--) {
-        table.removeChild(rows[i]);
-    }
+function resetResult() {
+    if (!table) return;
+    while (table.rows.length >= 2) table.deleteRow(-1);
 }
 
-function displayPrediction(table, input_image, prediction, ground_truth) {
-    let tr = document.createElement('tr');
+function displayPrediction(inputImage, prediction, groundTruth) {
     let canvas = document.createElement('canvas');
     canvas.width = 28;
     canvas.height = 28;
     let ctx = canvas.getContext('2d');
     let img = ctx.createImageData(28, 28);
     for (let i = 0; i < 28 * 28; i++) {
-        let pixel = input_image[i] * 255;
+        let pixel = inputImage[i] * 255;
         img.data[i * 4 + 0] = pixel;//r
         img.data[i * 4 + 1] = pixel;//g
         img.data[i * 4 + 2] = pixel;//b
         img.data[i * 4 + 3] = 255;//a
     }
     ctx.putImageData(img, 0, 0);
+
+    let tr = table.insertRow();
     tr.appendChild(document.createElement('td')).appendChild(canvas);
     tr.appendChild(document.createElement('td')).textContent = '' + prediction;
-    tr.appendChild(document.createElement('td')).textContent = '' + ground_truth;
-
-    table.appendChild(tr);
+    tr.appendChild(document.createElement('td')).textContent = '' + groundTruth;
 }

@@ -1,3 +1,5 @@
+[![CircleCI](https://circleci.com/gh/mil-tokyo/webdnn.svg?style=svg)](https://circleci.com/gh/mil-tokyo/webdnn)
+
 # WebDNN: Fastest DNN Execution Framework on Web Browser
 
 **WebDNN** は深層学習モデル(DNN)をウェブブラウザ上で高速実行するためのオープンソースフレームワークです。
@@ -25,7 +27,7 @@ WebDNNにより、ウェブブラウザ上での実行を前提とした積極�
     - 16 GB Memory
     - Intel Iris Graphics 6100 GPU
     - Safari Technology Preview 30
-- 測定内容: 画像識別モデルの一種, ResNet50[[1]](#1)およびVgg16[[2]](#2)を使用。224x224の画像1枚の推論に要する時間を測定。
+- 測定内容: 画像識別モデルの一種, Vgg16[[2]](#2), Inception-v3[[4]](#4), ResNet50[[1]](#1)を使用。224x224(Inception-v3のみ299x299)の画像1枚の推論に要する時間を測定。
 
 ![Benchmark result with Keras.js](https://github.com/mil-tokyo/webdnn/blob/master/docs/misc/performance.png)
 
@@ -61,18 +63,18 @@ let runner;
 
 async function init() {
     // DNNを実行するための "DescriptorRunner" を初期化する
-    runner = await WebDNN.prepareAll('./output');
+    runner = await WebDNN.load('./output');
 }
 
 async function run() {
     // 入力変数にデータをセット
-    runner.inputViews[0].set(loadImageData());
+    runner.getInputViews()[0].set(WebDNN.Image.getImageArray('./input_image.png'));
     
     // 実行
     await runner.run(); 
 
     // 結果を確認
-    console.log('Output', WebDNN.Math.argmax(runner.outputViews[0]));
+    console.log('Output', WebDNN.Math.argmax(runner.getOutputViews()[0].toActual()));
 }
 ```
 
@@ -91,3 +93,5 @@ async function run() {
 - <i id=2></i>[2] Karen Simonyan and Andrew Zisserman. 2014. Very Deep Convolutional Networks for Large-Scale Image Recognition. 
     In Proceedings of the International Conference on Learning Representations (ICLR).
 - <i id=3></i>[3] [Applications - Keras Documentation](https://keras.io/ja/applications/#resnet50)
+- <i id=4></i>[4] Christian Szegedy, Vincent Vanhoucke, Sergey Ioffe, Jon Shlens, and Zbigniew Wojna. 2016.
+    Rethinking the Inception Architecture for Computer Vision. In Proceedings of the Conference on Computer Vision and Pattern Recognition (CVPR).

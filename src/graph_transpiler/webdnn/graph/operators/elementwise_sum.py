@@ -1,36 +1,15 @@
-from typing import Optional
+import warnings
 
-from webdnn.graph.operator import Operator
-from webdnn.graph.operators.attributes.elementwise import Elementwise
-from webdnn.graph.operators.attributes.inplace import Inplace
-from webdnn.graph.variable import Variable
+from webdnn.graph.operators.elementwise_add import ElementwiseAdd
 
 
-class ElementwiseSum(Operator):
-    """Calculate elementwise sum of multiple input variables.
-
-    Args:
-        name (str): Operator name.
+class ElementwiseSum(ElementwiseAdd):
+    """
+    .. deprecated:: v1.2
+       Use :class:`~webdnn.graph.operators.elementwise_add.ElementwiseAdd` instead.
     """
 
-    def __init__(self, name: Optional[str]):
-        super().__init__(name)
-        self.attributes = {Elementwise(self),
-                           Inplace(self, "x0", "y")}
-
-    def __call__(self, *xs: Variable):
-        """
-        Args:
-            *xs (:class:`~webdnn.graph.variable.Variable`): Inputs
-
-        Returns:
-            tuple of :class:`~webdnn.graph.variable.Variable`: Output
-        """
-        y = Variable(xs[0].shape, xs[0].order)
-        for i, x in enumerate(xs):
-            for axis in x.order.axes:
-                assert axis in y.order.axes and y.shape_dict[axis] == x.shape_dict[axis]
-
-            self.append_input(f"x{i}", x)
-        self.append_output("y", y)
-        return y,
+    def __init__(self, *args, **kwargs):
+        # FIXME: Deprecated
+        warnings.warn("ElementwiseSum will be removed in the future version. Use ElementwiseAdd.", DeprecationWarning, stacklevel=2)
+        super(ElementwiseSum, self).__init__(*args, **kwargs)

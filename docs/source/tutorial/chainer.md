@@ -1,4 +1,4 @@
-# Use with Chainer Model
+# Use with chainer model
 
 ```eval_rst
 In this tutorial, we'll convert ResNet50 [#f1]_ classification model 
@@ -26,7 +26,7 @@ pretrained in Chainer [#f2]_ into WebDNN execution format.
 3. Convert chainer computation graph to our computation graph format
 
     ```python
-    from webdnn.graph.converters.chainer import ChainerGraphConverter
+    from webdnn.frontend.chainer import ChainerGraphConverter
 
     graph = ChainerGraphConverter().convert_from_inout_vars([x], [y])
     ```

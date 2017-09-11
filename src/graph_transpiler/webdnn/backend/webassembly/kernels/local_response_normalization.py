@@ -1,29 +1,28 @@
 from typing import List
 
+from webdnn.backend.code_generator.allocator import MemoryLayout
+from webdnn.backend.code_generator.injectors.buffer_injector import BufferInjector
+from webdnn.backend.code_generator.injectors.kernel_name_injector import KernelNameInjector
+from webdnn.backend.webassembly.generator import WebassemblyDescriptorGenerator
 from webdnn.backend.webassembly.kernel import Kernel
-from webdnn.backend.webassembly.kernels import util
-from webdnn.backend.webassembly.meta_buffer_injector import MetaBufferInjector
-from webdnn.backend.webgpu.allocator import MemoryLayout
 from webdnn.graph.axis import Axis
 from webdnn.graph.operators.local_response_normalization import LocalResponseNormalization
 from webdnn.graph.order import OrderNHWC
 
 template = """
-void %%FUNC_NAME%%(const int * %%META_NAME%%)
+void %%FUNC_NAME%%(const int * %%META_BUFFER%%)
 {
-    const float *X = data_buffer + %%META_LOAD(local_response_normalization_X_offset)%%;
-    float *Y = data_buffer + %%META_LOAD(local_response_normalization_Y_offset)%%;
-    const int N = %%META_LOAD(local_response_normalization_N)%%;
-    const int H = %%META_LOAD(local_response_normalization_H)%%;
-    const int W = %%META_LOAD(local_response_normalization_W)%%;
-    const int C = %%META_LOAD(local_response_normalization_C)%%;
-    const int Phalfn = %%META_LOAD(local_response_normalization_param_half_n)%%;
-    const float Pk = *((const float *)(& %%META_LOAD(local_response_normalization_param_k)%%));
-    const float Palpha = *((const float *)(& %%META_LOAD(local_response_normalization_param_alpha)%%));
-    const float Pmbeta = *((const float *)(& %%META_LOAD(local_response_normalization_param_minus_beta)%%));
+    const float *X = %%LOAD_BUFFER(local_response_normalization_X)%%;
+    float *Y = %%LOAD_BUFFER(local_response_normalization_Y)%%;
+    const int N = %%LOAD_BUFFER(local_response_normalization_N)%%;
+    const int H = %%LOAD_BUFFER(local_response_normalization_H)%%;
+    const int W = %%LOAD_BUFFER(local_response_normalization_W)%%;
+    const int C = %%LOAD_BUFFER(local_response_normalization_C)%%;
+    const int Phalfn = %%LOAD_BUFFER(local_response_normalization_param_half_n)%%;
+    const float Pk = *((const float *)(& %%LOAD_BUFFER(local_response_normalization_param_k)%%));
+    const float Palpha = *((const float *)(& %%LOAD_BUFFER(local_response_normalization_param_alpha)%%));
+    const float Pmbeta = *((const float *)(& %%LOAD_BUFFER(local_response_normalization_param_minus_beta)%%));
     
-    //%%INITIALIZER_ATTACHABLE_PLACEHOLDER%%
-
     for (int gid = 0; gid < N * H * W * C; gid += 1) {
         const int c = gid % C;
         const int w = gid / C % W;
@@ -48,48 +47,45 @@ void %%FUNC_NAME%%(const int * %%META_NAME%%)
         float scale = powf(sq_sum * Palpha + Pk, Pmbeta);
         float v = X[gid] * scale;
         
-        //Y[gid] = %%CHANNELWISE_ATTACHABLE(v, n)%%;
         Y[gid] = v;
     }
 }
 """
 
 
-# noinspection PyUnusedLocal
-def local_response_normalization(op: LocalResponseNormalization,
-                                 constants_layout: MemoryLayout,
-                                 variables_layout: MemoryLayout,
-                                 metabuffer_injector: MetaBufferInjector = None) -> List[Kernel]:
-    x = variables_layout[op.inputs["x"]]
-    y = variables_layout[op.outputs["y"]]
+@WebassemblyDescriptorGenerator.register_handler(LocalResponseNormalization)
+def local_response_normalization(op: LocalResponseNormalization, memory_layout: MemoryLayout) -> List[Kernel]:
+    x = op.inputs["x"]
+    y = op.outputs["y"]
 
-    assert x.variable.order == OrderNHWC
-    assert y.variable.order == OrderNHWC
+    assert x.order == OrderNHWC, x.order
+    assert y.order == OrderNHWC, y.order
 
-    if metabuffer_injector is None:
-        metabuffer_injector = MetaBufferInjector()
-
-    metabuffer_injector.register({
-        "local_response_normalization_X_offset": x.offset,
-        "local_response_normalization_Y_offset": y.offset,
-        "local_response_normalization_N": x.variable.shape_dict[Axis.N],
-        "local_response_normalization_H": x.variable.shape_dict[Axis.H],
-        "local_response_normalization_W": x.variable.shape_dict[Axis.W],
-        "local_response_normalization_C": x.variable.shape_dict[Axis.C],
+    buffer_injector = BufferInjector()
+    buffer_injector.register({
+        "local_response_normalization_X": memory_layout[x],
+        "local_response_normalization_Y": memory_layout[y],
+        "local_response_normalization_N": x.shape_dict[Axis.N],
+        "local_response_normalization_H": x.shape_dict[Axis.H],
+        "local_response_normalization_W": x.shape_dict[Axis.W],
+        "local_response_normalization_C": x.shape_dict[Axis.C],
         "local_response_normalization_param_half_n": int(op.parameters["n"] // 2),
         "local_response_normalization_param_k": float(op.parameters["k"]),
         "local_response_normalization_param_alpha": float(op.parameters["alpha"]),
         "local_response_normalization_param_minus_beta": float(-op.parameters["beta"])
     })
 
-    source = metabuffer_injector.inject(template)
-    func_name = util.add_canonical_suffix("local_response_normalization", source)
-    source = source.replace("%%FUNC_NAME%%", func_name)
+    name_injector = KernelNameInjector(op)
+
+    source = template
+    source = buffer_injector.inject(source)
+    source = name_injector.inject(source)
 
     kernel = Kernel(
-        {func_name: source},
-        func_name,
-        metabuffer_injector.generate_buffer()
+        {name_injector.name: source},
+        name_injector.name,
+        buffer_injector.buffer,
+        buffer_injector.unresolved_value_list
     )
 
     return [kernel]

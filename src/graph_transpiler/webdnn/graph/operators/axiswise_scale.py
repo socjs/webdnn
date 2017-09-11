@@ -1,49 +1,39 @@
+import warnings
 from typing import Optional
 
 from webdnn.graph.axis import Axis
-from webdnn.graph.operator import Operator
-from webdnn.graph.operators.attributes.axiswise import Axiswise
-from webdnn.graph.operators.attributes.have_weights import HaveWeights
-from webdnn.graph.operators.attributes.inplace import Inplace
-from webdnn.graph.operators.attributes.post_axiswise import PostAxiswise
+from webdnn.graph.operators.elementwise_mul import ElementwiseMul
 from webdnn.graph.variable import Variable
 
 
-class AxiswiseScale(Operator):
-    """Multiply a scale value along to specified axis.
+class AxiswiseScale(ElementwiseMul):
+    """AxiswiseScale(name, axis)
 
-    This is scale version of :class:`~webdnn.graph.operators.axiswise_bias.AxiswiseBias`. Please see that.
+    Multiply a scale value along to specified axis.
 
     Args:
         name (str): Operator name.
-        axis (:obj:~`graph_transpiler.graph.axis.Axis`): target axis
+        axis (:obj:`~webdnn.Axis`): target axis
 
+    Signature
+        .. code::
+
+            y, = op(x, s)
+
+        - **x** - Data variable. It must has `axis` axis, and whose size must be same as :code:`s`.
+        - **s** - Scale variable. It must be 1D variable and that size must be same as :code:`x.shape_dict[axis]`
+        - **y** - Output variable. Its order and shape is same as :code:`x`.
+
+    .. deprecated:: v1.2
+       Use :class:`~webdnn.graph.operators.elementwise_mul.ElementwiseMul` instead.
     """
 
     def __init__(self, name: Optional[str], axis: Axis):
         super().__init__(name)
         self.parameters["axis"] = axis
-        self.attributes = {PostAxiswise(self, Axis.C),
-                           Axiswise(self, Axis.C),
-                           Inplace(self, "x", "y"),
-                           HaveWeights(self)}
 
-    def __call__(self, x: Variable, s: Variable):
-        """
-        Args:
-            x (:class:`~webdnn.graph.variable.Variable`): Input
-            s (:class:`~webdnn.graph.variable.Variable`): Scale value
-
-        Returns:
-            tuple of :class:`~webdnn.graph.variable.Variable`: Output
-        """
-        assert s.ndim == 1
-        assert x.shape_dict[self.parameters["axis"]] == s.size
-        y = Variable(x.shape, x.order)
-        self.append_input("x", x)
-        self.append_input("s", s)
-        self.append_output("y", y)
-        return y,
+        # FIXME: Deprecated
+        warnings.warn("AxiswiseScale will be removed in the future version. Use ElementwiseMul.", DeprecationWarning, stacklevel=2)
 
     @property
     def axis(self) -> Axis:

@@ -1,12 +1,14 @@
-///<reference path="./weight_decoder_raw.ts" />
+/**
+ * @module webdnn
+ */
 
-namespace WebDNN {
-    export interface WeightDecoder {
-        decode(data: Uint8Array, weight_allocation: WeightAllocation): Promise<Float32Array>;
-    }
+/** Don't Remove This comment block */
 
-    export interface WeightAllocation {
-        total_size: number;
-        allocation: { [index: string]: { name: string, offset: number, size: number } }
-    }
+/**
+ * @protected
+ */
+interface WeightDecoder {
+    decode(data: Uint8Array): Promise<Float32Array>;
 }
+
+export default WeightDecoder

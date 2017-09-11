@@ -1,18 +1,34 @@
-from typing import Dict, Tuple, Type, List
+from typing import Dict, Tuple, Optional
 
-from webdnn.graph.attribute import Attribute
-from webdnn.graph.interface import IVariable, IOperator
+from webdnn.graph import variable
 from webdnn.graph.node import Node
 
 
-# FIXME: DOCS
-class Operator(Node, IOperator):
-    def __init__(self, name: str):
-        super().__init__(name)
-        self.inputs: Dict[str, IVariable] = {}
-        self.outputs: Dict[str, IVariable] = {}
+class Operator(Node):
+    """Operator(name=None)
 
-    def get_input_name(self, var: IVariable):
+    Operator a.k.a layer or function in DNN computation graph.
+
+    Args:
+        name (str): the name. If :code:`None`, automatically generated name is used.
+    """
+
+    def __init__(self, name: Optional[str] = None):
+        super().__init__(name)
+        self._inputs = {}  # type: Dict[str, "variable.Variable"]
+        self._outputs = {}  # type: Dict[str, "variable.Variable"]
+
+    @property
+    def inputs(self) -> Dict[str, "variable.Variable"]:
+        """input variables"""
+        return dict(self._inputs)
+
+    @property
+    def outputs(self) -> Dict[str, "variable.Variable"]:
+        """output variables"""
+        return dict(self._outputs)
+
+    def get_input_name(self, var: "variable.Variable"):
         for name, v in self.inputs.items():
             if v is not var:
                 continue
@@ -20,9 +36,9 @@ class Operator(Node, IOperator):
             return name
 
         else:
-            raise KeyError(f"'{name}' is not input of {self}")
+            raise KeyError(f"'{var}' is not input of {self}")
 
-    def get_output_name(self, var: IVariable):
+    def get_output_name(self, var: "variable.Variable"):
         for name, v in self.outputs.items():
             if v is not var:
                 continue
@@ -30,32 +46,47 @@ class Operator(Node, IOperator):
             return name
 
         else:
-            raise KeyError(f"'{name}' is not output of {self}")
+            raise KeyError(f"'{var}' is not output of {self}")
 
-    def append_input(self, name: str, var: IVariable):
+    def append_input(self, name: str, var: "variable.Variable"):
+        """append_input(name, var)
+
+        Append input variable
+
+        Args:
+            name(str): the name of input variable
+            var(:class:`~webdnn.Variable`): the variable
         """
-        入力変数を追加する
-        """
-        # noinspection PyTypeChecker
+        if name in self.inputs:
+            raise KeyError(f"{name} is already used as key of input variable f{self.inputs[name]}.")
+
         self.append_prev(var)
+        self._inputs[name] = var
 
-        self.inputs[name] = var
-        var.input_to.add(self)
+    def remove_input(self, var: "variable.Variable"):
+        """remove_input(var)
 
-    def remove_input(self, var: IVariable):
+        Remove input variable
+
+        Args:
+            var(:class:`~webdnn.Variable`): the variable
         """
-        入力変数を解除する
-        """
-        # noinspection PyTypeChecker
-        self.remove_prev(var)
+        if var not in self.prevs:
+            raise KeyError(f"{var} is not registered in input variables.")
 
         name = self.get_input_name(var)
-        self.inputs.pop(name)
-        var.input_to.remove(self)
 
-    def replace_input(self, v_old: IVariable, v_new: IVariable):
-        """
-        入力変数を置き換える
+        self.remove_prev(var)
+        self._inputs.pop(name)
+
+    def replace_input(self, v_old: "variable.Variable", v_new: "variable.Variable"):
+        """replace_input(v_old, v_new)
+
+        Replace input variable with other variable
+
+        Args:
+            v_old(:class:`~webdnn.Variable`): the variable which is removed
+            v_new(:class:`~webdnn.Variable`): the variable which is appended
         """
         assert v_old.ndim == v_new.ndim, \
             "[operator.replace_input(v_old, v_new)] v_old and v_new must have same number of dimensions." + \
@@ -71,33 +102,46 @@ class Operator(Node, IOperator):
         self.remove_input(v_old)
         self.append_input(name, v_new)
 
-    def append_output(self, name: str, var: IVariable):
+    def append_output(self, name: str, var: "variable.Variable"):
+        """append_output(name, var)
+
+        Append output variable
+
+        Args:
+            name(str): the name of output variable
+            var(:class:`~webdnn.Variable`): the variable
         """
-        出力変数を追加する
-        """
+        if name in self.outputs:
+            raise KeyError(f"{name} is already used as key of output variable f{self.outputs[name]}.")
         if var.output_from is not None:
             raise KeyError(f"{var} has been registered as f{var.output_from}'s output already.")
 
-        # noinspection PyTypeChecker
         self.append_next(var)
+        self._outputs[name] = var
 
-        self.outputs[name] = var
-        var.output_from = self
+    def remove_output(self, var: "variable.Variable"):
+        """remove_output(var)
 
-    def remove_output(self, var: IVariable):
+        Remove output variable
+
+        Args:
+            var(:class:`~webdnn.Variable`): the variable
         """
-        出力変数を解除する
-        """
-        # noinspection PyTypeChecker
-        self.remove_next(var)
-
+        if var not in self.nexts:
+            raise KeyError(f"{var} is not registered in input variables.")
         name = self.get_output_name(var)
-        self.outputs.pop(name)
-        var.output_from = None
 
-    def replace_output(self, v_old: IVariable, v_new: IVariable):
-        """
-        出力変数を置き換える
+        self.remove_next(var)
+        self._outputs.pop(name)
+
+    def replace_output(self, v_old: "variable.Variable", v_new: "variable.Variable"):
+        """replace_output(v_old, v_new)
+
+        Replace output variable with other variable
+
+        Args:
+            v_old(:class:`~webdnn.Variable`): the variable which is removed
+            v_new(:class:`~webdnn.Variable`): the variable which is appended
         """
         assert v_old.ndim == v_new.ndim, \
             "[operator.replace_output(v_old, v_new)] v_old and v_new must have same number of dimensions." + \
@@ -114,8 +158,9 @@ class Operator(Node, IOperator):
         self.append_output(name, v_new)
 
     def remove_all(self):
-        """
-        全ての変数の接続を解除する
+        """remove_all()
+
+        Remove all input and output variables
         """
         for _, v in list(self.inputs.items()):
             self.remove_input(v)
@@ -123,9 +168,14 @@ class Operator(Node, IOperator):
         for _, v in list(self.outputs.items()):
             self.remove_output(v)
 
-    def replace(self, new_op: "Operator"):
-        """
-        演算を置き換える
+    def replace(self, op_new: "Operator"):
+        """replace(op_new)
+
+        Replace this operator by new operator. all variables connected with this operator will be disconnected and
+        connected to the new operator.
+
+        Args:
+            op_new(:class:`~webdnn.Operator`): the new operator
         """
         inputs = dict(self.inputs)
         outputs = dict(self.outputs)
@@ -133,10 +183,10 @@ class Operator(Node, IOperator):
         self.remove_all()
 
         for name, var in inputs.items():
-            new_op.append_input(name, var)
+            op_new.append_input(name, var)
 
         for name, var in outputs.items():
-            new_op.append_output(name, var)
+            op_new.append_output(name, var)
 
     def __repr__(self):
         return f"""<{self.__class__.__name__} inputs={self.inputs}, outputs={self.outputs}>"""
@@ -144,11 +194,8 @@ class Operator(Node, IOperator):
     def __str__(self):
         return self.__repr__()
 
-    def __call__(self, *args, **kwargs) -> Tuple[IVariable]:
-        pass
+    def __call__(self, *args, **kwargs) -> Tuple["variable.Variable"]:
+        raise NotImplementedError(f"Operator.__call__ must be override: (self.__class__)={self.__class__.__name__}")
 
-    def get_attribute(self, Attr: Type[Attribute]) -> List[Attribute]:
-        return [attr for attr in self.attributes if isinstance(attr, Attr)]
-
-    def has_attribute(self, Attr: Type[Attribute]) -> List[Attribute]:
-        return len(self.get_attribute(Attr)) > 0
+    def fold_constance(self):
+        raise NotImplementedError(f"Operator.fold_constance must be override: (self.__class__)={self.__class__.__name__}")

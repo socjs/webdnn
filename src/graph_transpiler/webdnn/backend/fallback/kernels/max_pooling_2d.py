@@ -1,5 +1,7 @@
 from typing import List
 
+from webdnn.backend.code_generator.allocator import MemoryLayout
+from webdnn.backend.fallback.generator import FallbackDescriptorGenerator
 from webdnn.backend.fallback.kernel import Kernel
 from webdnn.backend.fallback.kernels.util import calculate_stride
 from webdnn.graph.axis import Axis
@@ -9,7 +11,7 @@ from webdnn.graph.operators.max_pooling_2d import MaxPooling2D
 # EcmaScript3 to support older browsers
 
 source = """
-max_pooling_2d: function(input_arrays, output_arrays, param_arrays, option) {
+max_pooling_2d: function(input_arrays, output_arrays, option) {
 var x = input_arrays[0];
 var y = output_arrays[0];
 var n = option.n | 0;
@@ -66,16 +68,17 @@ def calculate_all_strides(var):
     return [calculate_stride(var, axis) for axis in [Axis.N, Axis.H, Axis.W, Axis.C]]
 
 
-def max_pooling_2d(op: MaxPooling2D) -> List[Kernel]:
+# noinspection PyUnusedLocal
+@FallbackDescriptorGenerator.register_handler(MaxPooling2D)
+def max_pooling_2d(op: MaxPooling2D, memory_layout: MemoryLayout) -> List[Kernel]:
     x = op.inputs["x"]
     y = op.outputs["y"]
 
     kernel = Kernel(
         {"max_pooling_2d": source},
         "max_pooling_2d",
-        inputs=[x.parameters["name"]],
-        outputs=[y.parameters["name"]],
-        weights=[],
+        inputs=[memory_layout[x]],
+        outputs=[memory_layout[y]],
         call_option={"in_spatial": [x.shape_dict[Axis.H], x.shape_dict[Axis.W]],
                      "n": x.shape_dict[Axis.N],
                      "out_size": y.shape_dict[Axis.C],

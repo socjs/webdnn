@@ -1,33 +1,19 @@
-from typing import Optional
-
-from webdnn.graph.operator import Operator
-from webdnn.graph.operators.attributes.elementwise import Elementwise
-from webdnn.graph.operators.attributes.inplace import Inplace
-from webdnn.graph.variable import Variable
+from webdnn.graph.operators.elementwise import Elementwise
 
 
-class Tanh(Operator):
-    """Tanh activation 
+class Tanh(Elementwise):
+    """Tanh(name)
+
+    Tanh operator.
 
     Args:
         name (str): Operator name.
 
+    Signature
+        .. code::
+
+            y, = op(x0)
+
+        - **x0** - Input variable.
+        - **y** - Output variable. Its order and shape is same as :code:`x0`.
     """
-
-    def __init__(self, name: Optional[str]):
-        super().__init__(name)
-        self.attributes = {Elementwise(self),
-                           Inplace(self, "x", "y")}
-
-    def __call__(self, x: Variable):
-        """
-        Args:
-            x (:class:`~webdnn.graph.variable.Variable`): Input
-
-        Returns:
-            tuple of :class:`~webdnn.graph.variable.Variable`: Output
-        """
-        y = Variable(x.shape, x.order)
-        self.append_input("x", x)
-        self.append_output("y", y)
-        return y,

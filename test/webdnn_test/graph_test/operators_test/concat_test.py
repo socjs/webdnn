@@ -1,17 +1,15 @@
 import itertools
-from typing import Type
 
 import numpy as np
 from nose.tools import raises
 
 from webdnn.graph.axis import Axis
 from webdnn.graph.operators.concat import Concat
-from webdnn.graph.order import Order, OrderC, OrderNC, OrderCN, OrderNHWC, OrderHWNC, OrderHWCN, OrderCNHW, \
-    OrderCHWN, OrderNCHW
+from webdnn.graph.order import Order, OrderC, OrderNC, OrderCN, OrderNHWC, OrderHWNC, OrderHWCN, OrderCNHW, OrderCHWN, OrderNCHW
 from webdnn.graph.variable import Variable
 
 
-def main(order1: Type[Order], order2: Type[Order], concat_axis: Axis):
+def main(order1: Order, order2: Order, concat_axis: Axis):
     default_order = {
         1: OrderC,
         2: OrderNC,
@@ -34,13 +32,12 @@ def main(order1: Type[Order], order2: Type[Order], concat_axis: Axis):
             assert y.shape_dict[axis] == x1.shape_dict[axis]
 
 
-# FIXME 各orderをテストにわけられないか
 def test_every_order():
     orders = [OrderC, OrderNC, OrderCN, OrderNHWC, OrderHWNC, OrderHWCN, OrderNCHW, OrderCNHW, OrderCHWN]
     axes = [Axis.N, Axis.H, Axis.W, Axis.C]
 
-    for order1, order2, axis in itertools.product(orders, orders, axes):
-        if set(order1.axes) != set(order2.axes) or axis not in order1.axes:
+    for order1, order2, axis in itertools.product(orders, orders, axes):  # type: Order, Order, Axis
+        if not order1.check_same_axes(order2) or axis not in order1.axes:
             continue
 
         main(order1, order2, axis)

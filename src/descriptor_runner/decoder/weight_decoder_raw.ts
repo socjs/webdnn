@@ -1,9 +1,15 @@
-///<reference path="./weight_decoder.ts" />
+/**
+ * @module webdnn
+ */
+/** Don't Remove This comment block */
 
-namespace WebDNN {
-    export class WeightDecoderRaw implements WeightDecoder {
-        async decode(data: Uint8Array, weight_allocation: WeightAllocation) : Promise<Float32Array> {
-            return new Float32Array(data.buffer, data.byteOffset, data.byteLength / 4);
-        }
+import WeightDecoder from "./weight_decoder";
+
+/**
+ * @protected
+ */
+export default class WeightDecoderRaw implements WeightDecoder {
+    async decode(data: Uint8Array): Promise<Float32Array> {
+        return new Float32Array(data.buffer, data.byteOffset, data.byteLength / 4);
     }
 }

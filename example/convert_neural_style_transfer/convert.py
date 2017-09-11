@@ -3,12 +3,12 @@ import sys
 from enum import Enum
 from os import path
 
-import chainer.computational_graph
+import chainer
 import numpy as np
 from model import FastStyleNet
 
-from webdnn.backend.interface.generator import generate_descriptor
-from webdnn.graph.converters.chainer import ChainerGraphConverter
+from webdnn.backend import generate_descriptor
+from webdnn.frontend.chainer import ChainerConverter
 
 
 class NSTModelPath(Enum):
@@ -42,11 +42,16 @@ if not path.exists(model_path):
 chainer.serializers.load_npz(model_path, model)
 
 # Execute forward propagation to construct computation graph
-x = chainer.Variable(np.zeros((1, 3, 144, 192), dtype=np.float32))
-y = model(x, test=True)
+if chainer.__version__ >= "2.":
+    with chainer.using_config("train", False):  # fixes batch normalization
+        x = chainer.Variable(np.zeros((1, 3, 144, 192), dtype=np.float32))
+        y = model(x)
+else:
+    x = chainer.Variable(np.zeros((1, 3, 144, 192), dtype=np.float32))
+    y = model(x, test=False)
 
 # Convert chainer computation graph into IR
-graph = ChainerGraphConverter().convert_from_inout_vars([x], [y])
+graph = ChainerConverter().convert([x], [y])
 
 # Generate graph descriptor
 generate_descriptor(args.backend, graph, constant_encoder_name=args.encoding).save(path.join(path.dirname(__file__), "./output"))

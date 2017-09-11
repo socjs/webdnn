@@ -1,35 +1,37 @@
-namespace WebDNN {
+/**
+ * @module webdnn
+ */
+/** Don't Remove This comment block */
+
+import { MemoryLayout } from "./memory_layout";
+
+/**
+ * Graph Descriptor
+ * @protected
+ */
+export interface GraphDescriptor {
     /**
-     * Graph Descriptor
+     * input variables' name
      */
-    export interface GraphDescriptor {
-        /**
-         * input variables' name
-         */
-        inputs: string[];
+    inputs: string[];
 
-        /**
-         * output variables' name
-         */
-        outputs: string[];
+    /**
+     * output variables' name
+     */
+    outputs: string[];
 
-        /**
-         * Allocation information for each variable.
-         */
-        weight_allocation: {
-            allocation: { [name: string]: any }
-        };
+    /**
+     * memory position table
+     */
+    memory_layout: MemoryLayout,
 
-        /**
-         * Allocation information for each variable.
-         */
-        variable_allocation: {
-            allocation: { [name: string]: any }
-        };
+    /**
+     * Encoding algorithm of weight binary data.
+     */
+    weight_encoding: string;
 
-        /**
-         * Encoding algorithm of weight binary data.
-         */
-        weight_encoding: string;
-    }
+    /**
+     * Placeholder dict
+     */
+    placeholders: { [key: string]: number }
 }

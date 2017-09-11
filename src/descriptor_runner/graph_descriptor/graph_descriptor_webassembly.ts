@@ -1,14 +1,14 @@
-/// <reference path="./graph_descriptor.ts" />
+/**
+ * @module webdnn
+ */
+/** Don't Remove This comment block */
 
-namespace WebDNN {
-    export interface GraphDescriptorWebassembly extends GraphDescriptor {
-        weight_allocation: {
-            total_size: number;
-            allocation: { [index: string]: { name: string, offset: number, size: number } }
-        };
-        variable_allocation: {
-            total_size: number;
-            allocation: { [index: string]: { name: string, offset: number, size: number } }
-        };
-    }
+import { Placeholder } from "../placeholder";
+import { GraphDescriptor } from "./graph_descriptor";
+
+/**
+ * @protected
+ */
+export interface GraphDescriptorWebassembly extends GraphDescriptor {
+    unresolved_value_lists: { offset: number, placeholder: Placeholder }[][];
 }

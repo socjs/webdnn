@@ -17,7 +17,6 @@ def test_change_order():
     assert np.all(v.data == d2)
 
 
-@raises(NotImplementedError)
 def test_change_order_with_expansion():
     d1 = np.arange(3 * 4).reshape((3, 4))
     v = ConstantVariable(d1, OrderNC)
@@ -28,14 +27,13 @@ def test_change_order_with_expansion():
     assert np.all(v.data.flatten() == d2.flatten())
 
 
-@raises(NotImplementedError)
 def test_change_order_with_compression():
     d1 = np.arange(3 * 4).reshape((3, 1, 1, 4))
     v = ConstantVariable(d1, OrderNHWC)
     v.change_order(OrderCN)
     d2 = np.rollaxis(d1, 0, 4)
 
-    assert v.order == OrderCHWN
+    assert v.order == OrderCN
     assert np.all(v.data.flatten() == d2.flatten())
 
 

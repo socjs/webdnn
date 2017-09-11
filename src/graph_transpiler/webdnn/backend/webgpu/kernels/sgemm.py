@@ -1,20 +1,20 @@
 from typing import List
 
-from webdnn.backend.webgpu.allocator import MemoryLayout
-from webdnn.backend.webgpu.injectors.inline_injector import InlineInjector
-from webdnn.backend.webgpu.injectors.kernel_name_injector import KernelNameInjector
-from webdnn.backend.webgpu.injectors.meta_injector import MetaInjector
+from webdnn.backend.code_generator.allocator import MemoryLayout
+from webdnn.backend.code_generator.injectors.buffer_injector import BufferInjector
+from webdnn.backend.code_generator.injectors.kernel_name_injector import KernelNameInjector
+from webdnn.backend.webgpu.generator import WebGPUDescriptorGenerator
 from webdnn.backend.webgpu.kernel import Kernel, GPUSize
 from webdnn.backend.webgpu.operators.sgemm import Sgemm
 
 
-def generate_template_64(transpose_A, transpose_B, M, N, K, has_inline, with_bias):
+def generate_template_64(transpose_A, transpose_B, M, N, K):
     return ("""
-kernel void %%FUNC_NAME%%(const device float *weight_buffer[[buffer(0)]],
-                          device float *data_buffer[[buffer(1)]],
-                          const device int * %%META_NAME%% [[buffer(2)]],
-                          ushort index[[thread_index_in_threadgroup]],
-                          ushort2 group_position[[threadgroup_position_in_grid]])
+kernel void %%FUNC_NAME%%(device float * %%STATIC_BUFFER%%[[buffer(0)]],
+                          device float * %%DYNAMIC_BUFFER%%[[buffer(1)]],
+                          const device int * %%META_BUFFER%% [[buffer(2)]],
+                          uint index[[thread_index_in_threadgroup]],
+                          uint2 group_position[[threadgroup_position_in_grid]])
 {
 #define TRANSPOSE_A %%TRANSPOSE_A%%
 #define TRANSPOSE_B %%TRANSPOSE_B%%
@@ -38,24 +38,20 @@ kernel void %%FUNC_NAME%%(const device float *weight_buffer[[buffer(0)]],
     #define B_STRIDE_N K
 #endif
 
-#define WITH_BIAS %%WITH_BIAS%%
-#define HAS_INLINE %%HAS_INLINE%%
-
-
 #if K_DIVIDABLE_BY_8 && M_DIVIDABLE_BY_64  && N_DIVIDABLE_BY_64 && !TRANSPOSE_A && TRANSPOSE_B && OPTIMIZE
     const device float4 *load_target4 = (index & 32) 
-        ? (const device float4 *)(weight_buffer + %%META_LOAD(sgemm_B_offset)%%) 
-        : (const device float4 *)(data_buffer + %%META_LOAD(sgemm_A_offset)%%);
+        ? (const device float4 *)(%%LOAD_BUFFER(sgemm_B)%%) 
+        : (const device float4 *)(%%LOAD_BUFFER(sgemm_A)%%);
 #else
     const device float *load_target = (index & 32) 
-        ? (weight_buffer + %%META_LOAD(sgemm_B_offset)%%) 
-        : (data_buffer + %%META_LOAD(sgemm_A_offset)%%);
+        ? (%%LOAD_BUFFER(sgemm_B)%%) 
+        : (%%LOAD_BUFFER(sgemm_A)%%);
 #endif
 
-    const int M = %%META_LOAD(sgemm_M)%%;
-    const int N = %%META_LOAD(sgemm_N)%%;
+    const int M = %%LOAD_BUFFER(sgemm_M)%%;
+    const int N = %%LOAD_BUFFER(sgemm_N)%%;
 
-    const int K = %%META_LOAD(sgemm_K)%%;
+    const int K = %%LOAD_BUFFER(sgemm_K)%%;
 
     threadgroup float4 shared4[32 * 8 * 2];
 
@@ -309,14 +305,7 @@ kernel void %%FUNC_NAME%%(const device float *weight_buffer[[buffer(0)]],
     {
     
 #if OPTIMIZE && N_DIVIDABLE_BY_64
-    #if WITH_BIAS
-        float4 b[2];
-        const device float4 *bias4 = (const device float4 *)(weight_buffer + %%META_LOAD(sgemm_b_offset)%%);
-        b[0] = bias4[group_position.y * 16 + n_offset * 2 + 0];
-        b[1] = bias4[group_position.y * 16 + n_offset * 2 + 1];
-    #endif
-    
-        device float4 *C4 = (device float4 *)(data_buffer + %%META_LOAD(sgemm_C_offset)%%);
+        device float4 *C4 = (device float4 *)(%%LOAD_BUFFER(sgemm_C)%%);
         const int N4 = N >> 2;
         int m = group_position.x * 64 + m_offset * 8;
         for (int m_sub = 0; m_sub < 8; m_sub++)
@@ -330,40 +319,13 @@ kernel void %%FUNC_NAME%%(const device float *weight_buffer[[buffer(0)]],
             float4 result0 = result[m_sub * 2 + 0];
             float4 result1 = result[m_sub * 2 + 1];
 
-    #if WITH_BIAS
-            result0 += b[0];
-            result1 += b[1];
-    #endif
-
-    #if HAS_INLINE
-            result0[0] = %%INLINE(result0[0])%%;
-            result0[1] = %%INLINE(result0[1])%%;
-            result0[2] = %%INLINE(result0[2])%%;
-            result0[3] = %%INLINE(result0[3])%%;
-            result1[0] = %%INLINE(result1[0])%%;
-            result1[1] = %%INLINE(result1[1])%%;
-            result1[2] = %%INLINE(result1[2])%%;
-            result1[3] = %%INLINE(result1[3])%%;
-    #endif
-
             C4[m * N4 + n + 0] = result0;
             C4[m * N4 + n + 1] = result1;
             
             m++;
         }
 #else
-    #if WITH_BIAS
-        const device float *bias = weight_buffer + %%META_LOAD(sgemm_b_offset)%%;
-        float b[8];
-        for (int n_sub = 0; n_sub < 8; n_sub++)
-        {
-            b[n_sub] = (group_position.y * 64 + n_offset * 8 + n_sub < N)
-                ? bias[group_position.y * 64 + n_offset * 8 + n_sub]
-                : 0;
-        }
-    #endif
-
-        device float *C = data_buffer + %%META_LOAD(sgemm_C_offset)%%;
+        device float *C = %%LOAD_BUFFER(sgemm_C)%%;
         int m = group_position.x * 64 + m_offset * 8;
         for (int m_sub = 0; m_sub < 8; m_sub++)
         {
@@ -374,18 +336,10 @@ kernel void %%FUNC_NAME%%(const device float *weight_buffer[[buffer(0)]],
                 for (int n_sub2 = 0; n_sub2 < 4; n_sub2++)
                 {
 
-    #if WITH_BIAS
-        #if OPTIMIZE && M_DIVIDABLE_BY_64
-                    (         n < N) ? (C[m * N + n] = %%INLINE(result[m_sub * 2 + n_sub1][n_sub2] + b[n_sub1*4+n_sub2])%%) : 0;
-        #else
-                    (m < M && n < N) ? (C[m * N + n] = %%INLINE(result[m_sub * 2 + n_sub1][n_sub2] + b[n_sub1*4+n_sub2])%%) : 0;
-        #endif
+    #if OPTIMIZE && M_DIVIDABLE_BY_64
+                    (         n < N) ? (C[m * N + n] = result[m_sub * 2 + n_sub1][n_sub2]) : 0;
     #else
-        #if OPTIMIZE && M_DIVIDABLE_BY_64
-                    (         n < N) ? (C[m * N + n] = %%INLINE(result[m_sub * 2 + n_sub1][n_sub2])%%) : 0;
-        #else
-                    (m < M && n < N) ? (C[m * N + n] = %%INLINE(result[m_sub * 2 + n_sub1][n_sub2])%%) : 0;
-        #endif
+                    (m < M && n < N) ? (C[m * N + n] = result[m_sub * 2 + n_sub1][n_sub2]) : 0;
     #endif
                     n++;
                 }
@@ -407,48 +361,38 @@ kernel void %%FUNC_NAME%%(const device float *weight_buffer[[buffer(0)]],
 #undef B_STRIDE_K
 #undef A_STRIDE_M
 #undef A_STRIDE_M
-#undef WITH_BIAS
-#undef HAS_INLINE
 }
 """) \
         .replace("%%M_DIVIDABLE_BY_64%%", "1" if M % 64 == 0 else "0") \
         .replace("%%N_DIVIDABLE_BY_64%%", "1" if N % 64 == 0 else "0") \
         .replace("%%K_DIVIDABLE_BY_8%%", "1" if K % 8 == 0 else "0") \
         .replace("%%TRANSPOSE_A%%", "1" if transpose_A else "0") \
-        .replace("%%TRANSPOSE_B%%", "1" if transpose_B else "0") \
-        .replace("%%WITH_BIAS%%", "1" if with_bias else "0") \
-        .replace("%%HAS_INLINE%%", "1" if has_inline else "0")
+        .replace("%%TRANSPOSE_B%%", "1" if transpose_B else "0")
 
 
-def sgemm(op: Sgemm,
-          constants_layout: MemoryLayout,
-          variables_layout: MemoryLayout) -> List[Kernel]:
-    A = variables_layout[op.inputs["A"]] if op.inputs["A"] in variables_layout else constants_layout[op.inputs["A"]]
-    B = variables_layout[op.inputs["B"]] if op.inputs["B"] in variables_layout else constants_layout[op.inputs["B"]]
-    C = variables_layout[op.outputs["C"]]
+@WebGPUDescriptorGenerator.register_handler(Sgemm)
+def sgemm(op: Sgemm, memory_layout: MemoryLayout) -> List[Kernel]:
+    A = op.inputs["A"]
+    B = op.inputs["B"]
+    C = op.outputs["C"]
 
-    with_bias = "b" in op.inputs
-
-    meta_injector = MetaInjector()
-    meta_injector.register({
-        "sgemm_A_offset": A.offset,
-        "sgemm_B_offset": B.offset,
-        "sgemm_C_offset": C.offset,
-        "sgemm_b_offset": constants_layout[op.inputs["b"]].offset if with_bias else 0,
+    buffer_injector = BufferInjector()
+    buffer_injector.register({
+        "sgemm_A": memory_layout[A],
+        "sgemm_B": memory_layout[B],
+        "sgemm_C": memory_layout[C],
         "sgemm_M": op.M,
         "sgemm_N": op.N,
         "sgemm_K": op.K
     })
 
-    inline_injector = InlineInjector(op)
     name_injector = KernelNameInjector(op)
 
     # transpose_X assumes fortran-order data. True means X is C-order, False means Fortran-order.
     # In default convolution, transpose_A == transpose_B == True.
     # The order of output matrix C is C-order.
-    source = generate_template_64(op.transpose_A, op.transpose_B, op.M, op.N, op.K, inline_injector.has_inline, with_bias)
-    source = meta_injector.inject(source)
-    source = inline_injector.inject(source)
+    source = generate_template_64(op.transpose_A, op.transpose_B, op.M, op.N, op.K)
+    source = buffer_injector.inject(source)
     source = name_injector.inject(source)
 
     kernel = Kernel(
@@ -456,7 +400,8 @@ def sgemm(op: Sgemm,
         name_injector.name,
         GPUSize((op.M + 64 - 1) // 64, (op.N + 64 - 1) // 64, 1),
         GPUSize(64, 1, 1),
-        meta_injector.buffer
+        buffer_injector.buffer,
+        buffer_injector.unresolved_value_list
     )
 
     return [kernel]

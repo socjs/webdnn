@@ -1,19 +1,17 @@
 {
     "compilerOptions": {
+        "moduleResolution": "node",
         "target": "es5",
         "strictNullChecks": true,
-        "outFile": "../../dist/webdnn.es5.js",
         "lib": [
             "es2017",
+            "es2016",
+            "es2015",
             "dom"
         ],
-        "declaration": true,
-        "sourceMap": true
+        "declaration": false
     },
     "files": [
-        "license.ts",
-        "webdnn.ts",
-        "math.ts",
-        "get_backend_availability.ts"
+        "./webdnn.ts"
     ]
 }

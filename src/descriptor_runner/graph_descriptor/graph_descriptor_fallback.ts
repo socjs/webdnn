@@ -1,24 +1,25 @@
-/// <reference path="./graph_descriptor.ts" />
+/**
+ * @module webdnn
+ */
+/** Don't Remove This comment block */
 
-namespace WebDNN {
-    export interface GraphDescriptorFallback extends GraphDescriptor {
-        weight_allocation: {
-            total_size: number;
-            allocation: { [index: string]: { name: string, offset: number, size: number } }
-        };
-        variable_allocation: {
-            total_size: number;
-            allocation: { [index: string]: { name: string, offset: number, size: number } }
-        };
-        kernel_source: string;
-        exec_infos: GraphDescriptorFallbackExecInfo[];
-    }
+import { GraphDescriptor } from "./graph_descriptor";
 
-    export interface GraphDescriptorFallbackExecInfo {
-        entry_func_name: string;
-        inputs: string[];
-        outputs: string[];
-        weights: string[];
-        call_option: any;
-    }
+/**
+ * @protected
+ */
+export interface GraphDescriptorFallback extends GraphDescriptor {
+    kernel_source: string;
+    exec_infos: GraphDescriptorFallbackExecInfo[];
+}
+
+/**
+ * @protected
+ */
+export interface GraphDescriptorFallbackExecInfo {
+    entry_func_name: string;
+    inputs: string[];
+    outputs: string[];
+    weights: string[];
+    call_option: any;
 }

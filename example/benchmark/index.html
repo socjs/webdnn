@@ -3,38 +3,61 @@
 <head>
     <meta charset="utf-8">
     <title>Benchmark</title>
-    <script src="./keras-js/dist/keras.js"></script>
     <script src="../../dist/webdnn.js"></script>
+    <script src="./kerasjs/dist/keras.js"></script>
+    <script src="https://storage.googleapis.com/learnjs-data/deeplearn-latest.js"></script>
     <script src="index.js"></script>
+    <style>
+        body {
+            font-size: 14px;
+        }
+
+        h4 {
+            margin: 24px 0 0;
+        }
+
+        pre {
+            font-family: 'Consolas', 'Monaco', monospace, serif;
+            font-size: 12px;
+            tab-size: 2;
+        }
+    </style>
 </head>
 <body>
-
-<a href="./index.es5.html">For IE11</a>
 
 <h1>Benchmark</h1>
 
 <form name="benchmark">
     <div>
-        Model:
-        <label><input type="radio" name="model_name" value="resnet50" checked>ResNet50</label>
-        <label><input type="radio" name="model_name" value="vgg16">VGG16</label>
+        <h4>Model</h4>
+        <select id="modelName">
+            <option value="resnet50" selected>ResNet50</option>
+            <option value="vgg16">VGG16</option>
+            <option value="inception_v3">Inception v3</option>
+        </select>
     </div>
-<div id="modelist">
-    Framework and backends:<br>
-</div>
-Iterations: <input type="text" name="iterations" size="4" value="3"> + 1 proceeding run <br>
+    <div>
+        <h4>Framework and backends</h4>
+        <select id="configurations">
 
-<button type="button" id="run_button" onclick="run();return false" disabled>run</button> (It will take several minutes)
+        </select>
+    </div>
+    <div>
+        <h4>Iterations</h4>
+        1(warming up) + <input type="number" id="iteration" min="1" size="4" value="3"/>
+    </div>
+    <div>
+        <h4>Batch Size</h4>
+        <input type="number" id="batchSize" size="4" min="1" value="1"/>
+    </div>
 
-<pre id="environment_note">
-</pre>
+    <button type="button" id="runButton" disabled>run</button>
+    (It will take several minutes)
+</form>
 
 <div>
-<pre id="message">
-
-</pre>
+    <pre id="log"></pre>
 </div>
-</form>
 
 </body>
 </html>

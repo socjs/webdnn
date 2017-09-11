@@ -1,35 +1,35 @@
 # Test
 
-### GraphBuilder
+As test framework, [nose](http://nose.readthedocs.io/en/latest/) is used in WebDNN. `nosetests` installed by `pip install nose` runs 
+the test.
 
-- テストフレームワークとして[nose](http://nose.readthedocs.io/en/latest/)を使用
-    `pip install nose` でインストールされる `nosetests` コマンドでテストを実行可能。
+```shell
+nosetests
+```
 
+`nosetests` traverses all directories and files with suffix `_test` recursively. As default, all test cases in `/test/webdnn_test` will 
+be executed.
+
+## Kernel test
+
+Kernel code is test on web browsers. To run test, you need to generate all kernel codes first.
+
+```shell
+nosetests ./test/runtime
+```
+
+Then, open `/test/kernel_test.html` and press `RUN` button. Result is output at console.
+
+Generating all code requires about 10 minutes. 
+
+- If you want to check only specific layers, you can specify python files to check.
+
+    ```shell
+    nosetests ./test/runtime/frontend_test/keras_test/layers_test/core_test/activation_test.py
     ```
-    nosetests
+  
+- To check only specific backend, you can toggle target backends like follows,
+
+    ```shell
+    TEST_WEBGPU=1 TEST_WEBASSEMBLY=0 TEST_FALLBACK=0 nosetests ./test/runtime
     ```
-
-- テスト追加の際はフォルダ・ファイル名の末尾に `_test` をつけること
-
-- カバレッジも取れる
-
-    ```
-    nosetests --with-coverage --cover-tests graph_transpiler
-    ```
-    
-    ただしカバレッジはそもそもimportしていないファイルについて計算されないので注意
-
-- カーネルコード生成のテストは、ウェブブラウザで行う。
-
-    - 予め、テスト用のカーネルコードを生成する必要がある
-    
-        ```
-        nosetests -w ./test/kernels
-        ```
-
-    - `kernel_test.html` を開いて[RUN]を押すと生成されたカーネルコードがテストされる。
-
-
-### DescriptorRunner
-
-- 未定

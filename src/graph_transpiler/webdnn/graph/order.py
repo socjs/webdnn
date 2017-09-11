@@ -1,23 +1,40 @@
-from typing import Dict, List
+from typing import Tuple, Sequence
 
-from webdnn.graph.axis import Axis
-
-"""
-This attribute means data order, not number of dimensions
-"""
+from webdnn.graph.axis import Axis, AxisKeyDict
 
 
-# FIXME: DOCS
-# FIXME: Is it need to extend from Attribute?
 class Order:
-    ndim: int
-    axes: List[Axis]
-    axes_dict: Dict[Axis, int]
+    """Order(axes)
 
-    def __init__(self, axes: List[Axis]):
-        self.ndim = len(axes)
-        self.axes = axes
-        self.axes_dict = {a: i for i, a in enumerate(axes)}
+    Descriptor class for representing semantics of data order.
+
+    For example, :obj:`~webdnn.graph.order.OrderNHWC` means that the data is aligned as Channel-major (Batch-size-minor).
+    Popular data order is already defined in :mod:`webdnn.graph.order`. You should use pre-defined order instance.
+
+    If you have to define new data order, you can simply as follows.
+
+    .. code::
+
+        OrderHCNW = Order([Axis.H, Axis.C, Axis.N, Axis.W])
+
+    Args:
+        axes(list of :class:`~webdnn.Axis`): list of axis.
+    """
+
+    def __init__(self, axes: Sequence[Axis]):
+        self._axes = tuple(axes)
+
+    @property
+    def axes(self) -> Tuple[Axis, ...]:
+        return self._axes
+
+    @property
+    def ndim(self) -> int:
+        return len(self.axes)
+
+    @property
+    def axes_dict(self) -> AxisKeyDict[int]:
+        return AxisKeyDict(self.axes, range(self.ndim))
 
     def __eq__(self, other):
         if isinstance(other, Order):
@@ -30,7 +47,40 @@ class Order:
         return self.__str__()
 
     def __str__(self):
-        return "".join([axis.name for axis in self.axes])
+        return f"[{', '.join([axis.name for axis in self.axes])}]"
+
+    def check_same_axes(self, other: "Order") -> bool:
+        """
+        check_same_axes(order)
+
+        check if 2 orders have same axes (the axis order is not considered)
+
+        Args:
+            other: other order
+        """
+        return all(axis in other.axes for axis in self.axes) and all(axis in self.axes for axis in other.axes)
+
+    def get_common_axes(self, other: "Order") -> Sequence[Axis]:
+        """
+        get_common_axes(order)
+
+        return axes which are included in both two order.
+
+        Args:
+            other: other order
+        """
+        return [axis for axis in self.axes if axis in other.axes]
+
+    def get_all_axes(self, other: "Order") -> Sequence[Axis]:
+        """
+        get_all_axes(order)
+
+        return axes which are included in either two order.
+
+        Args:
+            other: other order
+        """
+        return list(self.axes) + [axis for axis in other.axes if axis not in self.axes]
 
 
 """
@@ -86,3 +136,6 @@ usage:
     Chainer Deconvolution2D Filter
 """
 OrderCHWN = Order([Axis.C, Axis.H, Axis.W, Axis.N])
+
+OrderNT = Order([Axis.N, Axis.T])
+OrderNTC = Order([Axis.N, Axis.T, Axis.C])

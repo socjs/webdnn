@@ -1,159 +1,336 @@
-/// <reference path="../buffer/buffer_webgpu.ts" />
-/// <reference path="../webgpu_handler.ts" />
-/// <reference path="./descriptor_runner.ts" />
-/// <reference path="../decoder/get_weight_decoder.ts" />
-/// <reference path="../fetch.ts" />
-/// <reference path="../graph_descriptor/graph_descriptor_webgpu.ts" />
+/**
+ * @module webdnn
+ */
+/** Don't Remove This comment block */
 
-namespace WebDNN {
-    export class DescriptorRunnerWebGPU implements DescriptorRunner {
-        private descriptor: GraphDescriptorWebGPU;
-        private weightMat: BufferWebGPU;
-        private dataMat: BufferWebGPU;
-        private metaBufferGPUBuffers: BufferWebGPU[];
-        public ignoreCache: boolean = false;
-        public backend: string = 'webgpu';
-        private inputViews: Float32Array[];
-        private outputViews: Float32Array[];
+import BufferWebGPU from "../buffer/buffer_webgpu";
+import get_weight_decoder from "../decoder/get_weight_decoder";
+import webdnnFetch, { readArrayBufferProgressively } from "../fetch";
+import { GraphDescriptorWebGPU, GraphDescriptorWebGPUExecInfos } from "../graph_descriptor/graph_descriptor_webgpu";
+import PlaceholderContext from "../placeholder";
+import SymbolicFloat32Array from "../symbolic_typed_array/symbolic_float32array";
+import { BackendName, isDebugMode } from "../webdnn";
+import WebGPUHandler, { IS_WEBGPU_SUPPORTED } from "../webgpu_handler";
+import { DescriptorRunner } from "./descriptor_runner";
 
-        constructor(private webGPUHandler: WebGPUHandler) {
+/**
+ * @private
+ */
+const IS_IOS = navigator.userAgent.includes('iPhone');
 
+/**
+ * @protected
+ */
+export default class DescriptorRunnerWebGPU extends DescriptorRunner<GraphDescriptorWebGPU> {
+    readonly backendName: BackendName = 'webgpu';
+
+    private webgpuHandler: WebGPUHandler;
+    private shaderLanguage: string;
+
+    private staticBuffer: BufferWebGPU | null;
+    private dynamicBuffer: BufferWebGPU | null;
+    private metaBuffers: BufferWebGPU[] | null;
+
+    private inputViews: SymbolicFloat32Array[] | null;
+    private outputViews: SymbolicFloat32Array[] | null;
+
+    private executionInfos: GraphDescriptorWebGPUExecInfos[] | null;
+
+    static checkAvailability() {
+        return IS_WEBGPU_SUPPORTED;
+    }
+
+    //noinspection JSUnusedLocalSymbols
+    constructor(option?: any) {
+        super();
+    }
+
+    async init() {
+        if (!DescriptorRunnerWebGPU.checkAvailability()) throw Error('WebGPU backend is not supported in this browser.');
+
+        // initialize webgpu, build kernels
+        this.shaderLanguage = 'metal';
+        this.webgpuHandler = new WebGPUHandler();
+        BufferWebGPU.init(this.webgpuHandler);
+
+        this.initializeBasicKernels();
+        await this.checkIncompatibleGPU();
+    }
+
+    private initializeBasicKernels() {
+        this.webgpuHandler.loadKernel('kernel void sync(){}', 'basic');
+    }
+
+    private async checkIncompatibleGPU() {
+        /*
+        It is reported that AMD GPU crashes when performing sgemm (matrix multiplication).
+        Until this problem is solved, blocking WebGPU backend in the environment is needed.
+        API in WebGPU does not directly gives hardware information, so trying to determine hardware heuristically.
+
+        Criteria: thread_execution_width == 32 is required
+        (on AMD FirePro D500, thread_execution_width == 64)
+        */
+        this.webgpuHandler.loadKernel(`
+#include <metal_stdlib>
+using namespace metal;
+        kernel void check_compatibility(
+            device float *A[[buffer(0)]],
+            uint global_index[[thread_position_in_grid]],
+            uint thread_execution_width[[thread_execution_width]]
+        ){
+            if (global_index == 0) {
+                A[0] = thread_execution_width;
+            }
+        }`, 'basic');
+        let trans_buf = this.webgpuHandler.createBuffer(new Float32Array(1));
+        await this.webgpuHandler.executeSinglePipelineState('basic.check_compatibility',
+            {
+                width: 1,
+                height: 1,
+                depth: 1
+            }, {
+                width: 1,
+                height: 1,
+                depth: 1
+            }, [trans_buf], true);
+        let trans_array_view = new Float32Array(trans_buf.contents);
+        let thread_execution_width = trans_array_view[0];
+        if (thread_execution_width != 32) {
+            throw new Error(`Sorry, this GPU does not compatible with WebGPU (thread_execution_width == ${thread_execution_width}. See checkIncompatibleGPU method of https://github.com/mil-tokyo/webdnn/blob/master/src/descriptor_runner/descriptor_runner/descriptor_runner_webgpu.ts`);
         }
+    }
 
-        async load(directory: string, progressCallback?: (loaded: number, total: number) => any) {
-            let graph_url = `${directory}/graph_${this.backend}.json`;
-            if (this.ignoreCache) {
-                graph_url += '?t=' + Date.now();
-            }
-            graph_url = transformUrl(graph_url);
-            let graph_fetch = await WebDNN.fetch(graph_url);
-            if (!graph_fetch.ok) {
-                throw new Error(`${graph_url} cannot be loaded`);
-            }
-            this.descriptor = await graph_fetch.json();
-            await this.compile();
+    async load(directory: string, progressCallback?: (loaded: number, total: number) => any) {
+        let [descriptor, weightRawArray] = await Promise.all([
+            webdnnFetch(`${directory}/graph_${this.backendName}.json`, { ignoreCache: this.ignoreCache })
+                .then(res => res.json() as Promise<GraphDescriptorWebGPU>),
 
-            let weight_url = `${directory}/weight_${this.backend}.bin`;
-            if (this.ignoreCache) {
-                weight_url += '?t=' + Date.now();
-            }
-            weight_url = transformUrl(weight_url);
-            let weights_data_ab = await readArrayBufferProgressively(await WebDNN.fetch(weight_url, progressCallback), progressCallback);
-            await this.loadWeights(new Uint8Array(weights_data_ab));
-        }
+            webdnnFetch(`${directory}/weight_${this.backendName}.bin`, { ignoreCache: this.ignoreCache })
+                .then(res => readArrayBufferProgressively(res, progressCallback))
+        ]);
 
-        setDescriptor(descriptor: GraphDescriptorWebGPU) {
-            this.descriptor = descriptor;
-        }
+        await this.setDescriptor(descriptor);
+        await this.compile();
+        await this.initializeStaticBuffer(weightRawArray);
+        await this.initializeMetaBuffers();
 
-        async compile() {
-            this.webGPUHandler.loadKernel(this.descriptor.kernel_source, 'descriptor');
-            this.weightMat = new BufferWebGPU(this.descriptor.weight_allocation.total_size * Float32Array.BYTES_PER_ELEMENT);
-            this.dataMat = new BufferWebGPU(this.descriptor.variable_allocation.total_size * Float32Array.BYTES_PER_ELEMENT);
-            this.metaBufferGPUBuffers = [];
-            for (let i = 0; i < this.descriptor.exec_infos.length; i++) {
-                let exec_info = this.descriptor.exec_infos[i];
-                let buf = new BufferWebGPU(exec_info.meta_buffer.length * Float32Array.BYTES_PER_ELEMENT);
-                await buf.write(new Uint8Array(exec_info.meta_buffer));
-                this.metaBufferGPUBuffers.push(buf);
-            }
-        }
+        await this.setPlaceholderValue({
+            '__MAX_THREADS_PER_THREADGROUP__': IS_IOS ? 512 : 512
+        });
+        if (this.placeholderContext && this.placeholderContext.isResolved) await this.initializeDynamicBuffer();
+    }
 
-        async loadWeights(weightsData: Uint8Array) {
-            let decoder = get_weight_decoder(this.descriptor.weight_encoding);
-            await this.weightMat.write(await decoder.decode(weightsData, this.descriptor.weight_allocation));
-        }
+    private async initializeStaticBuffer(weightRawArray: ArrayBuffer) {
+        if (!this.descriptor) throw Error("GraphDescriptor is not loaded.");
+        let descriptor = this.descriptor;
 
-        async getInputViews(): Promise<Float32Array[]> {
-            if (this.inputViews) {
-                return this.inputViews;
-            }
-            let views: Float32Array[] = [];
-            for (let i = 0; i < this.descriptor.inputs.length; i++) {
-                let var_alloc = this.descriptor.variable_allocation.allocation[this.descriptor.inputs[i]];
-                views.push(<Float32Array>this.dataMat.getWriteView(var_alloc.offset, var_alloc.size, Float32Array));
-            }
-            this.inputViews = views;
-            return views;
-        }
+        let staticBuffer = new BufferWebGPU(descriptor.memory_layout.static.size * Float32Array.BYTES_PER_ELEMENT);
+        this.staticBuffer = staticBuffer;
 
-        async getOutputViews(): Promise<Float32Array[]> {
-            if (this.outputViews) {
-                return this.outputViews;
-            }
-            let views: Float32Array[] = [];
-            for (let i = 0; i < this.descriptor.outputs.length; i++) {
-                let var_alloc = this.descriptor.variable_allocation.allocation[this.descriptor.outputs[i]];
-                views.push(<Float32Array>this.dataMat.getReadView(var_alloc.offset, var_alloc.size, Float32Array));
-            }
-            this.outputViews = views;
-            return views;
-        }
+        let decoder = get_weight_decoder(descriptor.weight_encoding);
+        await staticBuffer.write(await decoder.decode(new Uint8Array(weightRawArray)));
 
-        async run(): Promise<void> {
-            if (!this.inputViews || !this.outputViews) {
-                throw new Error('getInputViews and getOutputViews must be called prior to run');
-            }
+        (await this.getInputViews())
+            .filter(view => !view.isDynamic)
+            .forEach(view => view.setArrayBuffer(staticBuffer.bufferView.buffer));
 
-            if (window['PROFILE']) {
-                let records: any = [];
-                let totalElapsedTime = 0;
+        (await this.getOutputViews())
+            .filter(view => !view.isDynamic)
+            .forEach(view => view.setArrayBuffer(staticBuffer.bufferView.buffer));
+    }
 
-                for (let i = 0; i < this.descriptor.exec_infos.length; i++) {
-                    let exec_info = this.descriptor.exec_infos[i];
+    private async initializeMetaBuffers() {
+        if (!this.descriptor) throw Error("GraphDescriptor is not loaded.");
 
-                    let start = performance.now();
-                    await this.webGPUHandler.executeSinglePipelineState(
-                        'descriptor.' + exec_info.entry_func_name,
-                        exec_info.threadgroups_per_grid,
-                        exec_info.threads_per_thread_group,
-                        [this.weightMat, this.dataMat, this.metaBufferGPUBuffers[i]],
-                        true
-                    );
-                    let elapsedTime = performance.now() - start;
-                    records.push({
-                        'Kernel': exec_info.entry_func_name,
-                        'Elapsed time [ms]': elapsedTime
-                    });
-                    totalElapsedTime += elapsedTime;
+        this.metaBuffers = await Promise.all<BufferWebGPU>(
+            this.descriptor.exec_infos.map(async executionInfo => {
+                let buffer = new BufferWebGPU(executionInfo.meta_buffer.length * Int32Array.BYTES_PER_ELEMENT);
+                await buffer.write(new Uint8Array(executionInfo.meta_buffer));
+
+                return buffer;
+            })
+        );
+    }
+
+    private async initializeDynamicBuffer() {
+        if (!this.descriptor) throw Error("GraphDescriptor is not loaded.");
+        if (!this.placeholderContext) throw Error("PlaceholderContext is not initialized.");
+        let descriptor = this.descriptor;
+        let placeholderContext = this.placeholderContext;
+
+        let dynamicBufferSize = placeholderContext.resolve(descriptor.memory_layout.dynamic.size);
+        let dynamicBuffer = new BufferWebGPU(dynamicBufferSize * Float32Array.BYTES_PER_ELEMENT);
+        this.dynamicBuffer = dynamicBuffer;
+
+        (await this.getInputViews())
+            .filter(view => view.isDynamic)
+            .forEach(view => view.setArrayBuffer(dynamicBuffer.bufferView.buffer));
+
+        (await this.getOutputViews())
+            .filter(view => view.isDynamic)
+            .forEach(view => view.setArrayBuffer(dynamicBuffer.bufferView.buffer));
+    }
+
+    private async setDescriptor(descriptor: GraphDescriptorWebGPU) {
+        this.descriptor = descriptor;
+
+        //reset all datum depend on old descriptor
+        this.staticBuffer = null;
+        this.dynamicBuffer = null;
+        this.metaBuffers = null;
+        this.placeholderContext = new PlaceholderContext(descriptor.placeholders);
+        this.executionInfos = descriptor.exec_infos;
+    }
+
+    private async compile() {
+        if (!this.descriptor) throw new Error('Descriptor is not loaded');
+
+        this.webgpuHandler.loadKernel(this.descriptor.kernel_source, 'descriptor');
+    }
+
+    async setPlaceholderValue(values: { [key: string]: number }) {
+        if (!this.placeholderContext) throw new Error('PlaceholderContext is not initialized.');
+        let placeholderContext = this.placeholderContext;
+
+        placeholderContext.update(values);
+        if (!placeholderContext.isResolved) return;
+
+        if (!this.descriptor) throw new Error('Descriptor is not loaded');
+        if (!this.metaBuffers) throw new Error('MetaBuffers are not initialized');
+
+        let descriptor = this.descriptor;
+        let metaBuffers = this.metaBuffers;
+
+        await this.initializeDynamicBuffer();
+
+        // resolve placeholders in execution info
+        this.executionInfos = await Promise.all(
+            descriptor.exec_infos.map(async (executionInfo, i) => {
+
+                // resolve placeholders in meta buffer
+                let bufferView = new Int32Array(metaBuffers[i].bufferView.buffer);
+                for (let unresolved_value of executionInfo.unresolved_value_list) {
+                    bufferView[unresolved_value.offset] = placeholderContext.resolve(unresolved_value.placeholder);
                 }
 
-                let summary = Array.from(Object.values(records.reduce((summary, record) => {
-                    if (!(record['Kernel'] in summary)) {
-                        summary[record['Kernel']] = {
-                            'Kernel': record['Kernel'],
-                            'Count': 0,
-                            'Elapsed time [ms]': 0,
-                        };
-                    }
+                return placeholderContext.resolve(executionInfo);
+            })
+        );
+    }
 
-                    summary[record['Kernel']]['Count']++;
-                    summary[record['Kernel']]['Elapsed time [ms]'] += record['Elapsed time [ms]'];
+    getInputViews() {
+        if (this.inputViews) return this.inputViews;
 
-                    return summary;
-                }, {})));
+        if (!this.descriptor) throw new Error('Descriptor is not loaded');
+        if (!this.placeholderContext) throw new Error('PlaceholderContext is not initialized');
 
-                summary.forEach(record => record['Ratio [%]'] = (record['Elapsed time [ms]'] / totalElapsedTime).toFixed(2));
+        let descriptor = this.descriptor;
+        let placeholderContext = this.placeholderContext;
 
-                console.table(records);
-                console.table(summary);
+        this.inputViews = descriptor.inputs.map(name => {
+            let allocation = descriptor.memory_layout.static.allocations[name] || descriptor.memory_layout.dynamic.allocations[name];
+            let view = new SymbolicFloat32Array(allocation, placeholderContext);
 
-            } else {
-                let complete_promise: Promise<void> | null = null;
-                for (let i = 0; i < this.descriptor.exec_infos.length; i++) {
-                    let exec_info = this.descriptor.exec_infos[i];
-                    let is_last = i == this.descriptor.exec_infos.length - 1;
-                    complete_promise = this.webGPUHandler.executeSinglePipelineState(
-                        'descriptor.' + exec_info.entry_func_name,
-                        exec_info.threadgroups_per_grid,
-                        exec_info.threads_per_thread_group,
-                        [this.weightMat, this.dataMat, this.metaBufferGPUBuffers[i]],
-                        is_last
-                    );
+            return view;
+        });
+
+        return this.inputViews;
+    }
+
+    getOutputViews() {
+        if (this.outputViews) return this.outputViews;
+
+        if (!this.descriptor) throw new Error('Descriptor is not loaded');
+        if (!this.placeholderContext) throw new Error('PlaceholderContext is not initialized');
+
+        let descriptor = this.descriptor;
+        let placeholderContext = this.placeholderContext;
+
+        this.outputViews = descriptor.outputs.map(name => {
+            let allocation = descriptor.memory_layout.static.allocations[name] || descriptor.memory_layout.dynamic.allocations[name];
+            let view = new SymbolicFloat32Array(allocation, placeholderContext);
+
+            return view;
+        });
+
+        return this.outputViews;
+    }
+
+    async run(): Promise<void> {
+        if (this._running) throw new Error('Calling another run() while running.');
+        if (!this.executionInfos) throw new Error('ExecutionInfos is not loaded');
+        if (!this.inputViews || !this.outputViews) throw new Error('getInputViews and getOutputViews must be called prior to run');
+        if (!this.staticBuffer) throw new Error('StaticBuffer is not initialized');
+        if (!this.dynamicBuffer) throw new Error('DynamicBuffer is not initialized');
+        if (!this.metaBuffers) throw new Error('MetaBuffer is not initialized');
+        if (!this.placeholderContext) throw new Error('PlaceholderContext is not initialized');
+        if (!this.placeholderContext.isResolved) throw new Error(`Not all placeholders are resolved: ${this.placeholderContext}`);
+
+        let staticBuffer = this.staticBuffer;
+        let dynamicBuffer = this.dynamicBuffer;
+        let metaBuffers = this.metaBuffers;
+
+        this._running = true;
+        if (isDebugMode()) {
+            let records: any = [];
+            let totalElapsedTime = 0;
+
+            for (let i = 0; i < this.executionInfos.length; i++) {
+                let exec_info = this.executionInfos[i];
+
+                let start = performance.now();
+                await this.webgpuHandler.executeSinglePipelineState(
+                    'descriptor.' + exec_info.entry_func_name,
+                    exec_info.threadgroups_per_grid,
+                    exec_info.threads_per_thread_group,
+                    [staticBuffer, dynamicBuffer, metaBuffers[i]],
+                    true
+                );
+                let elapsedTime = performance.now() - start;
+                records.push({
+                    'Kernel': exec_info.entry_func_name,
+                    'Elapsed time [ms]': elapsedTime
+                });
+                totalElapsedTime += elapsedTime;
+            }
+
+            let summary = Array.from(Object.values(records.reduce((summary, record) => {
+                if (!(record['Kernel'] in summary)) {
+                    summary[record['Kernel']] = {
+                        'Kernel': record['Kernel'],
+                        'Count': 0,
+                        'Elapsed time [ms]': 0,
+                    };
                 }
 
-                await complete_promise!;//wait to finish final kernel
+                summary[record['Kernel']]['Count']++;
+                summary[record['Kernel']]['Elapsed time [ms]'] += record['Elapsed time [ms]'];
+
+                return summary;
+            }, {})));
+
+            summary.forEach(record => record['Ratio [%]'] = (record['Elapsed time [ms]'] / totalElapsedTime).toFixed(2));
+
+            console.table(records);
+            console.table(summary);
+
+        } else {
+            let complete_promise: Promise<void> | null = null;
+            for (let i = 0; i < this.executionInfos.length; i++) {
+                let exec_info = this.executionInfos[i];
+                let is_last = i == this.executionInfos.length - 1;
+                complete_promise = this.webgpuHandler.executeSinglePipelineState(
+                    'descriptor.' + exec_info.entry_func_name,
+                    exec_info.threadgroups_per_grid,
+                    exec_info.threads_per_thread_group,
+                    [staticBuffer, dynamicBuffer, metaBuffers[i]],
+                    is_last
+                );
             }
+
+            await complete_promise!;//wait to finish final kernel
         }
+
+        this._running = false;
     }
 }

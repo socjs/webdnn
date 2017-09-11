@@ -1,10 +1,12 @@
 from typing import List
 
-from webdnn.backend.webgpu.allocator import MemoryLayout
-from webdnn.backend.webgpu.injectors.kernel_name_injector import KernelNameInjector
-from webdnn.backend.webgpu.injectors.meta_injector import MetaInjector
+from webdnn.backend.code_generator.allocator import MemoryLayout
+from webdnn.backend.code_generator.injectors.buffer_injector import BufferInjector
+from webdnn.backend.code_generator.injectors.kernel_name_injector import KernelNameInjector
+from webdnn.backend.webgpu.generator import WebGPUDescriptorGenerator
 from webdnn.backend.webgpu.kernel import GPUSize, Kernel
 from webdnn.backend.webgpu.operators.col2im import Col2Im
+from webdnn.backend.webgpu.preset_placeholders import MAX_THREADS_PER_THREADGROUP
 from webdnn.graph.axis import Axis
 from webdnn.graph.order import OrderNHWC
 
@@ -14,27 +16,27 @@ from webdnn.graph.order import OrderNHWC
 # C2, H2, W2などはすべてDeconvのinput, Convのoutputのサイズを表すために使用
 
 template = """
-kernel void %%FUNC_NAME%%(const device float *param_buffer[[buffer(0)]],
-                          device float *data_buffer[[buffer(1)]],
-                          const device int * %%META_NAME%% [[buffer(2)]],
+kernel void %%FUNC_NAME%%(device float * %%STATIC_BUFFER%%[[buffer(0)]],
+                          device float * %%DYNAMIC_BUFFER%%[[buffer(1)]],
+                          const device int * %%META_BUFFER%% [[buffer(2)]],
                           uint index[[thread_position_in_grid]],
                           uint num_threads[[threads_per_grid]])
 {
-    const device float *col = data_buffer + %%META_LOAD(col2im_col_offset)%%;
-    device float *im = data_buffer + %%META_LOAD(col2im_im_offset)%%;
+    const device float *col = %%LOAD_BUFFER(col2im_col)%%;
+    device float *im = %%LOAD_BUFFER(col2im_im)%%;
 
-    const int N = %%META_LOAD(col2im_N)%%;
-    const int C1 = %%META_LOAD(col2im_C1)%%;
-    const int H1 = %%META_LOAD(col2im_H1)%%;
-    const int W1 = %%META_LOAD(col2im_W1)%%;
-    const int H2 = %%META_LOAD(col2im_H2)%%;
-    const int W2 = %%META_LOAD(col2im_W2)%%;
-    const int KH = %%META_LOAD(col2im_KH)%%;
-    const int KW = %%META_LOAD(col2im_KW)%%;
-    const int SH = %%META_LOAD(col2im_SH)%%;
-    const int SW = %%META_LOAD(col2im_SW)%%;
-    const int PH = %%META_LOAD(col2im_PH)%%;
-    const int PW = %%META_LOAD(col2im_PW)%%;
+    const int N = %%LOAD_BUFFER(col2im_N)%%;
+    const int C1 = %%LOAD_BUFFER(col2im_C1)%%;
+    const int H1 = %%LOAD_BUFFER(col2im_H1)%%;
+    const int W1 = %%LOAD_BUFFER(col2im_W1)%%;
+    const int H2 = %%LOAD_BUFFER(col2im_H2)%%;
+    const int W2 = %%LOAD_BUFFER(col2im_W2)%%;
+    const int KH = %%LOAD_BUFFER(col2im_KH)%%;
+    const int KW = %%LOAD_BUFFER(col2im_KW)%%;
+    const int SH = %%LOAD_BUFFER(col2im_SH)%%;
+    const int SW = %%LOAD_BUFFER(col2im_SW)%%;
+    const int PH = %%LOAD_BUFFER(col2im_PH)%%;
+    const int PW = %%LOAD_BUFFER(col2im_PW)%%;
 
     for (int gid = index; gid < N*H1*W1*C1; gid += num_threads) {
         const int c1 = gid % C1;
@@ -62,26 +64,24 @@ kernel void %%FUNC_NAME%%(const device float *param_buffer[[buffer(0)]],
 """
 
 
-# noinspection PyUnusedLocal
-def col2im(op: Col2Im,
-           constants_layout: MemoryLayout,
-           variables_layout: MemoryLayout) -> List[Kernel]:
-    col = variables_layout[op.inputs["col"]]
-    im = variables_layout[op.outputs["im"]]
+@WebGPUDescriptorGenerator.register_handler(Col2Im)
+def col2im(op: Col2Im, memory_layout: MemoryLayout) -> List[Kernel]:
+    col = op.inputs["col"]
+    im = op.outputs["im"]
 
-    assert col.variable.order == OrderNHWC
-    assert im.variable.order == OrderNHWC
+    assert col.order == OrderNHWC
+    assert im.order == OrderNHWC
 
-    meta_injector = MetaInjector()
-    meta_injector.register({
-        "col2im_im_offset": im.offset,
-        "col2im_col_offset": col.offset,
-        "col2im_N": col.variable.shape_dict[Axis.N],
-        "col2im_H2": col.variable.shape_dict[Axis.H],
-        "col2im_W2": col.variable.shape_dict[Axis.W],
-        "col2im_C1": im.variable.shape_dict[Axis.C],
-        "col2im_H1": im.variable.shape_dict[Axis.H],
-        "col2im_W1": im.variable.shape_dict[Axis.W],
+    buffer_injector = BufferInjector()
+    buffer_injector.register({
+        "col2im_im": memory_layout[im],
+        "col2im_col": memory_layout[col],
+        "col2im_N": col.shape_dict[Axis.N],
+        "col2im_H2": col.shape_dict[Axis.H],
+        "col2im_W2": col.shape_dict[Axis.W],
+        "col2im_C1": im.shape_dict[Axis.C],
+        "col2im_H1": im.shape_dict[Axis.H],
+        "col2im_W1": im.shape_dict[Axis.W],
         "col2im_KH": op.KH,
         "col2im_KW": op.KW,
         "col2im_SH": op.SH,
@@ -93,15 +93,16 @@ def col2im(op: Col2Im,
     name_injector = KernelNameInjector(op)
 
     source = template
-    source = meta_injector.inject(source)
+    source = buffer_injector.inject(source)
     source = name_injector.inject(source)
 
     kernel = Kernel(
         {name_injector.name: source},
         name_injector.name,
         GPUSize(8, 1, 1),
-        GPUSize(1024, 1, 1),
-        meta_injector.buffer
+        GPUSize(MAX_THREADS_PER_THREADGROUP, 1, 1),
+        buffer_injector.buffer,
+        buffer_injector.unresolved_value_list
     )
 
     return [kernel]
